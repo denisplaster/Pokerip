@@ -183,7 +183,7 @@ export function CardDetailView({ initial, compact }: { initial: CardDetailData; 
           ) : (
             <ul className="divide-y">
               {listings.items.map((l) => {
-                const mine = user?.id === l.sellerId;
+                const mine = l.isMine;
                 return (
                   <li key={l.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
                     <div>

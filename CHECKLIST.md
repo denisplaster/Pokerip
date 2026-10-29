@@ -44,8 +44,20 @@ This list tracks each requirement from the product brief. ✅ = implemented and 
 - ✅ Pack simulator: 1,000 / 10,000 / 100,000 openings with distribution chart, χ² test, RTP and value histogram
 - ✅ Responsive layouts (desktop sidebar/header, mobile tab bar), no horizontal overflow at 390px
 - ✅ Loading skeletons, error boundary, 404 page, toasts
-- ✅ 111 automated tests (54 unit/statistical + 57 integration), ESLint, TypeScript and the production build all pass
-- ✅ Security review (see README → Security)
+- ✅ 120 automated tests (55 unit/statistical + 65 integration), ESLint, TypeScript and the production build all pass
+- ✅ Independent security review completed, and its findings fixed:
+  - reward farming through alternate accounts
+  - open redirect via control characters
+  - raw user IDs exposed for private profiles
+  - sessions surviving a password change
+  - a race when suspending a user with listings
+  - case-insensitive username uniqueness
+  - `BIGINT` lifetime totals
+  - stricter CSRF checks
+  - per-IP sign-in limits
+  - idempotent admin adjustments
+  - a guard against configurations where opening and instantly selling a pack is profitable
+- ✅ Accessibility pass with axe-core (WCAG 2 A/AA): contrast, labelled progress bars and sliders, valid definition lists
 - ⚠️ Rate limiting is in-memory (single instance); swap for Redis in multi-instance deployments
 - ⚠️ Official card images aren't bundled (licensing): placeholder art plus an optional TCGdex importer
 - ✅ README with setup, testing, architecture, deployment (Vercel, Docker) and environment reference

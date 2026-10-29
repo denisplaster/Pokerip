@@ -8,6 +8,7 @@ export interface WalletState {
   balance: number;
   vouchers: Record<string, number>;
   dailyClaimable: boolean;
+  level: number;
 }
 
 export const WALLET_KEY = ["wallet"] as const;
@@ -29,7 +30,7 @@ export function useSetBalance() {
   return useCallback(
     (balance: number | null | undefined) => {
       if (typeof balance !== "number") return;
-      qc.setQueryData<WalletState>(WALLET_KEY, (prev) => (prev ? { ...prev, balance } : { balance, vouchers: {}, dailyClaimable: false }));
+      qc.setQueryData<WalletState>(WALLET_KEY, (prev) => (prev ? { ...prev, balance } : { balance, vouchers: {}, dailyClaimable: false, level: 1 }));
     },
     [qc],
   );

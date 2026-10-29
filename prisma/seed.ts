@@ -14,6 +14,7 @@ import { ACHIEVEMENTS, COLLECTIBLES, DAILY_REWARDS, MISSIONS, MYSTERY_BOXES, PAC
 import { DEFAULT_ACTIVITY, DEFAULT_ECONOMY, DEFAULT_MARKET, SIGNUP_BONUS, AVATARS } from "../src/lib/constants";
 import { addUtcDays, startOfUtcDay, utcDateKey } from "../src/lib/dates";
 import { levelForXp, xpForPack } from "../src/lib/levels";
+import { MARKETPLACE_MIN_LEVEL } from "../src/lib/market-rules";
 import { generateHistory } from "../src/lib/market-sim";
 import { compilePackOdds, drawPack, type PackOddsSnapshot } from "../src/lib/probability";
 import { RARITIES, rarityRank, type RarityKey } from "../src/lib/rarity";
@@ -347,9 +348,12 @@ async function seedMarketplace(bots: { id: string; username: string }[]) {
   // A few historical bot-to-bot sales, executed through the real marketplace flow.
   const { buyListing } = await import("../src/server/services/marketplace");
   const listings = await prisma.marketplaceListing.findMany({ where: { status: "ACTIVE" }, select: { id: true, sellerId: true, price: true } });
+  const traders = await prisma.user.findMany({ where: { id: { in: bots.map((b) => b.id) }, level: { gte: MARKETPLACE_MIN_LEVEL } }, select: { id: true } });
   for (const listing of listings) {
     if (rand() > 0.18) continue;
-    const buyer = pick(bots.filter((b) => b.id !== listing.sellerId));
+    const candidates = traders.filter((b) => b.id !== listing.sellerId);
+    if (!candidates.length) continue;
+    const buyer = pick(candidates);
     const wallet = await prisma.wallet.findUniqueOrThrow({ where: { userId: buyer.id } });
     if (wallet.balance < listing.price) continue;
     await buyListing(buyer.id, listing.id);

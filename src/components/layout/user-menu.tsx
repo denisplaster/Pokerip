@@ -13,17 +13,19 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useWallet } from "@/hooks/use-wallet";
 import { usePreferences } from "@/stores/preferences";
 
 export function UserMenu({ user }: { user: ClientUser }) {
   const { muted, toggleMuted } = usePreferences();
+  const { data: wallet } = useWallet();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className="flex items-center gap-2 rounded-xl p-1 outline-none ring-ring/50 transition-colors hover:bg-white/[0.06] focus-visible:ring-[3px]" aria-label="Account menu">
         <UserAvatar avatar={user.avatar} image={user.image} username={user.username} className="size-8" />
         <span className="hidden flex-col items-start leading-tight 2xl:flex">
           <span className="max-w-28 truncate text-sm font-semibold">{user.username}</span>
-          <span className="text-[11px] text-muted-foreground">Level {user.level}</span>
+          <span className="text-[11px] text-muted-foreground">Level {wallet?.level ?? user.level}</span>
         </span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">

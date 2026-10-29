@@ -79,22 +79,29 @@ describe("missions", () => {
     await expect(claimMission(user.id, mission.id)).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
-  it("tracks set completion as a one-off milestone", async () => {
+  it("tracks set completion as a one-off milestone for earned cards", async () => {
+    const { withTransaction } = await import("@/server/db");
+    const { afterCardsAcquired } = await import("@/server/services/progression");
     const user = await createUser({ balance: 0 });
     const mini = fx.cards.filter((c) => c.setId === fx.setIds[1]);
-    // Acquire both mini-set cards through the marketplace flow so completion bookkeeping runs.
-    const seller = await createUser();
-    const { createListing, buyListing } = await import("@/server/services/marketplace");
-    await prisma.wallet.update({ where: { userId: user.id }, data: { balance: 100 } });
-    await prisma.walletTransaction.create({ data: { walletId: (await prisma.wallet.findUniqueOrThrow({ where: { userId: user.id } })).id, userId: user.id, type: "ADMIN_ADJUSTMENT", amount: 100, balanceBefore: 0, balanceAfter: 100, description: "test" } });
-    for (const c of mini) {
-      const copy = await giveCard(seller.id, c.id);
-      const { listing } = await createListing(seller.id, copy.id, 5);
-      await buyListing(user.id, listing.id);
-    }
+    for (const c of mini) await giveCard(user.id, c.id);
+    await withTransaction((tx) => afterCardsAcquired(tx, user.id, mini.map((c) => c.id), new Set(), []));
     const mission = (await getMissions(user.id)).find((m) => m.key === "once-complete-set")!;
     expect(mission.completed).toBe(true);
     expect(await prisma.activityEvent.count({ where: { userId: user.id, type: "SET_COMPLETED" } })).toBe(1);
+  });
+
+  it("does not complete set missions with cards bought from other players", async () => {
+    const { createListing, buyListing } = await import("@/server/services/marketplace");
+    const buyer = await createUser({ balance: 1_000 });
+    const seller = await createUser();
+    for (const c of fx.cards.filter((c) => c.setId === fx.setIds[1])) {
+      const copy = await giveCard(seller.id, c.id);
+      const { listing } = await createListing(seller.id, copy.id, 5);
+      await buyListing(buyer.id, listing.id);
+    }
+    const mission = (await getMissions(buyer.id)).find((m) => m.key === "once-complete-set")!;
+    expect(mission.completed).toBe(false);
   });
 });
 
@@ -165,8 +172,8 @@ describe("leaderboards & privacy", () => {
     await updateProfile(seller.id, { profileVisibility: "PRIVATE" });
     const copy = await giveCard(seller.id, fx.cards[0].id);
     const second = await giveCard(seller.id, fx.cards[1].id);
-    const { listing } = await createListing(seller.id, copy.id, 50);
-    await createListing(seller.id, second.id, 60);
+    const { listing } = await createListing(seller.id, copy.id, 30);
+    await createListing(seller.id, second.id, 35);
     const listings = await searchListings({ sort: "newest", page: 1, limit: 10 });
     expect(JSON.stringify(listings)).not.toContain(seller.username);
     await buyListing(buyer.id, listing.id);

@@ -47,15 +47,15 @@ describe("marketplace", () => {
   it("sells a listing exactly once when buyers race", async () => {
     const seller = await createUser({ balance: 0 });
     const copy = await giveCard(seller.id, cardOf("SECRET_RARE").id);
-    const { listing } = await createListing(seller.id, copy.id, 2_000);
+    const { listing } = await createListing(seller.id, copy.id, 3_000);
     const buyers = await Promise.all(Array.from({ length: 6 }, () => createUser({ balance: 10_000 })));
     const results = await Promise.allSettled(buyers.map((b) => buyListing(b.id, listing.id)));
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     for (const r of results) if (r.status === "rejected") expect(String(r.reason.message)).toMatch(/just sold|no longer|unavailable/i);
     const balances = await Promise.all(buyers.map((b) => balanceOf(b.id)));
-    expect(balances.filter((b) => b === 8_000)).toHaveLength(1);
+    expect(balances.filter((b) => b === 7_000)).toHaveLength(1);
     expect(balances.filter((b) => b === 10_000)).toHaveLength(5);
-    expect(await balanceOf(seller.id)).toBe(1_900);
+    expect(await balanceOf(seller.id)).toBe(2_850);
   });
 
   it("rejects purchases without enough Rip Coins", async () => {
@@ -75,7 +75,7 @@ describe("marketplace", () => {
     await expect(createListing(stranger.id, copy.id, 100)).rejects.toMatchObject({ code: "NOT_FOUND" });
     await createListing(owner.id, copy.id, 100);
     await expect(createListing(owner.id, copy.id, 120)).rejects.toThrow(/already listed/);
-    const races = await Promise.allSettled([createListing(owner.id, (await giveCard(owner.id, cardOf("RARE").id)).id, 50)]);
+    const races = await Promise.allSettled([createListing(owner.id, (await giveCard(owner.id, cardOf("RARE").id)).id, 90)]);
     expect(races[0].status).toBe("fulfilled");
   });
 
@@ -89,6 +89,57 @@ describe("marketplace", () => {
     expect((await prisma.userCard.findUniqueOrThrow({ where: { id: copy.id } })).status).toBe("OWNED");
     await expect(cancelListing(seller.id, listing.id)).rejects.toThrow(/no longer active/);
     await expect(buyListing(other.id, listing.id)).rejects.toThrow(/just sold or cancelled/);
+  });
+});
+
+describe("marketplace anti-abuse rules", () => {
+  it("requires collector level 3 to buy or list", async () => {
+    const newbie = await createUser({ level: 1, balance: 5_000 });
+    const seller = await createUser();
+    const copy = await giveCard(newbie.id, cardOf("RARE").id);
+    await expect(createListing(newbie.id, copy.id, 120)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const other = await giveCard(seller.id, cardOf("RARE").id);
+    const { listing } = await createListing(seller.id, other.id, 120);
+    await expect(buyListing(newbie.id, listing.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("enforces a price band around the card's virtual value", async () => {
+    const seller = await createUser();
+    const card = cardOf("ULTRA_RARE"); // value 800 → band 560 – 3,200
+    const copy = await giveCard(seller.id, card.id);
+    await expect(createListing(seller.id, copy.id, 559)).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(createListing(seller.id, copy.id, 3_201)).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(createListing(seller.id, copy.id, 560)).resolves.toBeTruthy();
+  });
+
+  it("charges at least 1 RC in fees on small sales", async () => {
+    const seller = await createUser({ balance: 0 });
+    const buyer = await createUser({ balance: 100 });
+    const copy = await giveCard(seller.id, cardOf("COMMON").id); // value 10
+    const { listing } = await createListing(seller.id, copy.id, 15);
+    const sale = await buyListing(buyer.id, listing.id);
+    expect(sale.fee).toBe(1);
+    expect(await balanceOf(seller.id)).toBe(14);
+  });
+
+  it("never pays collection rewards for cards bought from other players", async () => {
+    const { achievementMetrics } = await import("@/server/services/missions");
+    const { ACHIEVEMENTS } = await import("../../prisma/data/game");
+    // This suite strips achievements by default; restore them to prove none are paid.
+    await prisma.achievement.createMany({ data: ACHIEVEMENTS.map((a, i) => ({ ...a, sortOrder: i })) });
+    const seller = await createUser();
+    const alt = await createUser({ balance: 100_000 });
+    for (const c of fx.cards.slice(0, 6)) {
+      const copy = await giveCard(seller.id, c.id);
+      const { listing } = await createListing(seller.id, copy.id, Math.max(2, Math.ceil(c.value * 0.7)));
+      await buyListing(alt.id, listing.id);
+    }
+    expect(await prisma.userCard.count({ where: { userId: alt.id } })).toBe(6);
+    const altMetrics = await achievementMetrics(prisma, alt.id);
+    expect(altMetrics).toMatchObject({ UNIQUE_CARDS: 0, TOTAL_CARDS: 0, COLLECTION_VALUE: 0, SETS_COMPLETED: 0 });
+    expect(await prisma.walletTransaction.count({ where: { userId: alt.id, type: { in: ["ACHIEVEMENT_REWARD", "MISSION_REWARD"] } } })).toBe(0);
+    // Six sales to a single buyer count as one distinct buyer towards marketplace badges.
+    expect((await achievementMetrics(prisma, seller.id)).MARKET_SALES).toBe(1);
   });
 });
 
@@ -112,7 +163,7 @@ describe("instant sell", () => {
     const theirs = await giveCard(other.id, cardOf("RARE").id);
     await expect(sellCards(user.id, [theirs.id])).rejects.toMatchObject({ code: "NOT_FOUND" });
     const mine = await giveCard(user.id, cardOf("RARE").id);
-    await createListing(user.id, mine.id, 500);
+    await createListing(user.id, mine.id, 400);
     await expect(sellCards(user.id, [mine.id])).rejects.toThrow(/Cancel the marketplace listing/);
     expect(await prisma.userCard.count({ where: { id: theirs.id, userId: other.id } })).toBe(1);
   });
@@ -133,7 +184,7 @@ describe("instant sell", () => {
     await Promise.all([giveCard(user.id, common.id), giveCard(user.id, common.id), giveCard(user.id, common.id)]);
     const listed = await giveCard(user.id, rare.id);
     await giveCard(user.id, rare.id);
-    await createListing(user.id, listed.id, 999);
+    await createListing(user.id, listed.id, 400);
     const res = await sellDuplicates(user.id, ["COMMON", "RARE"], 1);
     expect(res.sold).toBe(3); // 2 commons + 1 unlisted rare (the listed copy counts as the kept one)
     expect(await prisma.userCard.count({ where: { userId: user.id, cardId: common.id } })).toBe(1);

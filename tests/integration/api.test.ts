@@ -4,7 +4,7 @@ import { resetRateLimits } from "@/server/rate-limit";
 import { createUser, seedFixture } from "./fixtures";
 
 // Route handlers resolve the signed-in user through Auth.js; stub just that call.
-const session = vi.hoisted(() => ({ current: null as null | { user: { id: string } } }));
+const session = vi.hoisted(() => ({ current: null as null | { user: { id: string; sessionVersion?: number } } }));
 vi.mock("@/auth", () => ({
   auth: async () => session.current,
   handlers: {},
@@ -66,6 +66,16 @@ describe("HTTP API guards", () => {
       ctx({ id: "test-pack" }),
     );
     expect(form.status).toBe(400);
+    const sneaky = await openRoute(
+      req("/api/packs/test-pack/open", { method: "POST", body: { quantity: 1, idempotencyKey: "abcdefgh12" }, headers: { "content-type": "text/plain; x=application/json" } }),
+      ctx({ id: "test-pack" }),
+    );
+    expect(sneaky.status).toBe(400);
+    const fetchSite = await openRoute(
+      req("/api/packs/test-pack/open", { method: "POST", body: { quantity: 1, idempotencyKey: "abcdefgh12" }, headers: { "sec-fetch-site": "cross-site" } }),
+      ctx({ id: "test-pack" }),
+    );
+    expect(fetchSite.status).toBe(403);
   });
 
   it("restricts admin endpoints to administrators", async () => {
@@ -83,6 +93,18 @@ describe("HTTP API guards", () => {
     await prisma.user.update({ where: { id: user.id }, data: { suspendedAt: new Date() } });
     session.current = { user: { id: user.id } };
     expect((await walletRoute(req("/api/wallet"), ctx({}))).status).toBe(401);
+  });
+
+  it("signs out every session after a password change", async () => {
+    const { registerUser } = await import("@/server/services/users");
+    const { changePassword } = await import("@/server/services/profiles");
+    const user = await registerUser({ username: "rotator", email: "rot@test.dev", password: "password123" });
+    session.current = { user: { id: user.id, sessionVersion: 0 } };
+    expect((await walletRoute(req("/api/wallet"), ctx({}))).status).toBe(200);
+    await changePassword(user.id, "password123", "newpassword456");
+    expect((await walletRoute(req("/api/wallet"), ctx({}))).status).toBe(401);
+    session.current = { user: { id: user.id, sessionVersion: 1 } };
+    expect((await walletRoute(req("/api/wallet"), ctx({}))).status).toBe(200);
   });
 
   it("rate-limits registration", async () => {

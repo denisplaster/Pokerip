@@ -5,7 +5,7 @@ import Discord from "next-auth/providers/discord";
 import GitHub from "next-auth/providers/github";
 import { loginSchema } from "@/lib/validators";
 import { prisma } from "@/server/db";
-import { rateLimit } from "@/server/rate-limit";
+import { clientIpFromHeaders, rateLimit } from "@/server/rate-limit";
 import { findUserForLogin, linkOAuthAccount, verifyPassword } from "@/server/services/users";
 
 const providers: Provider[] = [
@@ -14,16 +14,20 @@ const providers: Provider[] = [
       identifier: { label: "Email or username" },
       password: { label: "Password", type: "password" },
     },
-    async authorize(raw) {
+    async authorize(raw, request) {
       const parsed = loginSchema.safeParse(raw);
       if (!parsed.success) return null;
       const { identifier, password } = parsed.data;
+      const user = await findUserForLogin(identifier);
       try {
-        rateLimit(`login:${identifier.toLowerCase()}`, 8, 10 * 60_000);
+        // Per-IP limit stops credential stuffing across many accounts; the per-account
+        // limit (keyed by resolved user id, so email and username share it) stops
+        // targeted guessing.
+        rateLimit(`login-ip:${clientIpFromHeaders(request?.headers)}`, 30, 10 * 60_000);
+        rateLimit(`login-user:${user?.id ?? identifier.toLowerCase()}`, 10, 10 * 60_000);
       } catch {
         return null;
       }
-      const user = await findUserForLogin(identifier);
       const ok = await verifyPassword(password, user?.passwordHash);
       if (!user || !ok || user.isBot || user.suspendedAt) return null;
       return { id: user.id, name: user.username, email: user.email, image: user.image };
@@ -67,9 +71,11 @@ export const authConfig = {
       if (token.uid && (account || trigger === "update" || !token.username)) {
         const dbUser = await prisma.user.findUnique({
           where: { id: token.uid as string },
-          select: { username: true, role: true, avatar: true, image: true, suspendedAt: true },
+          select: { username: true, role: true, avatar: true, image: true, suspendedAt: true, sessionVersion: true },
         });
         if (!dbUser || dbUser.suspendedAt) return null;
+        // Only stamped at sign-in: a later password change makes this session stale.
+        if (account) token.sv = dbUser.sessionVersion;
         token.username = dbUser.username;
         token.role = dbUser.role;
         token.avatar = dbUser.avatar;
@@ -83,6 +89,7 @@ export const authConfig = {
         session.user.username = (token.username as string) ?? "";
         session.user.role = (token.role as "USER" | "ADMIN") ?? "USER";
         session.user.avatar = (token.avatar as string) ?? "pikachu";
+        session.user.sessionVersion = typeof token.sv === "number" ? token.sv : 0;
       }
       return session;
     },

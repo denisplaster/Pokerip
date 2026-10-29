@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useUser } from "@/components/providers";
-import { api } from "@/lib/api-client";
+import { api, newIdempotencyKey } from "@/lib/api-client";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -104,6 +104,7 @@ function UserSheet({ userId, onClose }: { userId: string | null; onClose: () => 
   const qc = useQueryClient();
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
+  const [adjustKey, setAdjustKey] = useState(() => newIdempotencyKey());
   const { data, isLoading } = useQuery({
     queryKey: ["admin-user", userId],
     queryFn: () => api<UserDetail>(`/api/admin/users/${userId}`),
@@ -114,11 +115,12 @@ function UserSheet({ userId, onClose }: { userId: string | null; onClose: () => 
     qc.invalidateQueries({ queryKey: ["admin-users"] });
   };
   const adjust = useMutation({
-    mutationFn: () => api<{ balance: number }>(`/api/admin/users/${userId}/adjust`, { body: { amount: Number(amount), reason } }),
+    mutationFn: () => api<{ balance: number }>(`/api/admin/users/${userId}/adjust`, { body: { amount: Number(amount), reason, idempotencyKey: adjustKey } }),
     onSuccess: (r) => {
       toast.success(`Balance adjusted — now ${r.balance.toLocaleString()} RC`);
       setAmount("");
       setReason("");
+      setAdjustKey(newIdempotencyKey());
       refresh();
     },
     onError: (e: Error) => toast.error(e.message),

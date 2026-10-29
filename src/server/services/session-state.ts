@@ -6,11 +6,12 @@ export async function getWalletState(userId: string) {
   const [wallet, vouchers, user] = await Promise.all([
     prisma.wallet.findUnique({ where: { userId }, select: { balance: true } }),
     prisma.packVoucher.groupBy({ by: ["packId"], where: { userId, redeemedAt: null }, _count: true }),
-    prisma.user.findUnique({ where: { id: userId }, select: { lastDailyClaimAt: true } }),
+    prisma.user.findUnique({ where: { id: userId }, select: { lastDailyClaimAt: true, level: true } }),
   ]);
   return {
     balance: wallet?.balance ?? 0,
     vouchers: Object.fromEntries(vouchers.map((v) => [v.packId, v._count])),
     dailyClaimable: !user?.lastDailyClaimAt || utcDateKey(user.lastDailyClaimAt) !== utcDateKey(),
+    level: user?.level ?? 1,
   };
 }

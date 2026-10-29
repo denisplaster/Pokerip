@@ -6,6 +6,7 @@
  * Lock ordering convention (prevents deadlocks): Wallet rows before User rows.
  */
 import { randomUUID } from "node:crypto";
+import { Prisma } from "@/generated/prisma/client";
 import type { AchievementMetric, MissionType } from "@/generated/prisma/enums";
 import { periodKey } from "@/lib/dates";
 import { levelForXp, levelUpReward } from "@/lib/levels";
@@ -106,11 +107,17 @@ export async function trackEarnings(tx: Tx, userId: string, amount: number, noti
 
 // ── Collection state ─────────────────────────────────────────────────────────
 
-export async function completedSetIds(tx: Tx, userId: string): Promise<string[]> {
+/**
+ * Sets in which the user owns every active card. With `earnedOnly`, copies bought
+ * on the marketplace are ignored — rewards must be earned, not borrowed from
+ * another account (prevents passing a collection between accounts to farm rewards).
+ */
+export async function completedSetIds(tx: Tx, userId: string, opts: { earnedOnly?: boolean } = {}): Promise<string[]> {
+  const sourceFilter = opts.earnedOnly ? Prisma.sql`AND "source" <> 'MARKETPLACE'` : Prisma.empty;
   const rows = await tx.$queryRaw<{ setId: string }[]>`
     SELECT c."setId"
     FROM "Card" c
-    LEFT JOIN (SELECT DISTINCT "cardId" FROM "UserCard" WHERE "userId" = ${userId}) o ON o."cardId" = c."id"
+    LEFT JOIN (SELECT DISTINCT "cardId" FROM "UserCard" WHERE "userId" = ${userId} ${sourceFilter}) o ON o."cardId" = c."id"
     WHERE c."isActive" = true
     GROUP BY c."setId"
     HAVING COUNT(*) = COUNT(o."cardId")`;
@@ -130,7 +137,9 @@ export async function ownedCardIds(tx: Tx, userId: string, cardIds: string[]) {
 
 /**
  * Bookkeeping after cards enter a collection: unique-card missions, newly
- * completed sets and collection achievements.
+ * completed sets and collection achievements. Cards bought from other players
+ * (`rewardEligible: false`) still announce completed sets, but never pay
+ * mission or achievement rewards.
  */
 export async function afterCardsAcquired(
   tx: Tx,
@@ -138,11 +147,12 @@ export async function afterCardsAcquired(
   acquiredCardIds: string[],
   previouslyOwned: Set<string>,
   notices: Notices,
-  extraMetrics: AchievementMetric[] = [],
+  opts: { extraMetrics?: AchievementMetric[]; rewardEligible?: boolean } = {},
 ) {
+  const rewardEligible = opts.rewardEligible ?? true;
   const newUnique = [...new Set(acquiredCardIds)].filter((id) => !previouslyOwned.has(id));
   if (newUnique.length) {
-    await trackMission(tx, userId, "COLLECT_UNIQUE", newUnique.length, notices);
+    if (rewardEligible) await trackMission(tx, userId, "COLLECT_UNIQUE", newUnique.length, notices);
     const touchedSets = await tx.card.findMany({ where: { id: { in: newUnique } }, distinct: ["setId"], select: { setId: true } });
     const completed = new Set(await completedSetIds(tx, userId));
     const newlyCompleted = touchedSets.filter((s) => completed.has(s.setId));
@@ -153,9 +163,14 @@ export async function afterCardsAcquired(
         await recordActivity(tx, { type: "SET_COMPLETED", userId, message: `completed ${set.name}` });
       }
     }
-    await trackMission(tx, userId, "COMPLETE_SET", completed.size, notices, { mode: "max" });
+    if (rewardEligible) {
+      const earned = await completedSetIds(tx, userId, { earnedOnly: true });
+      await trackMission(tx, userId, "COMPLETE_SET", earned.length, notices, { mode: "max" });
+    }
   }
-  await checkAchievements(tx, userId, ["UNIQUE_CARDS", "TOTAL_CARDS", "COLLECTION_VALUE", "SETS_COMPLETED", ...extraMetrics], notices);
+  if (rewardEligible) {
+    await checkAchievements(tx, userId, ["UNIQUE_CARDS", "TOTAL_CARDS", "COLLECTION_VALUE", "SETS_COMPLETED", ...(opts.extraMetrics ?? [])], notices);
+  }
 }
 
 // ── Achievements ─────────────────────────────────────────────────────────────
@@ -169,25 +184,32 @@ async function computeMetric(tx: Tx, userId: string, metric: AchievementMetric):
       if (!u) return 0;
       return metric === "PACKS_OPENED" ? u.packsOpened : metric === "LEVEL" ? u.level : u.loginStreak;
     }
+    // Holdings-based metrics only count copies the user earned themselves.
     case "UNIQUE_CARDS": {
-      const [r] = await tx.$queryRaw<{ n: bigint }[]>`SELECT COUNT(DISTINCT "cardId") AS n FROM "UserCard" WHERE "userId" = ${userId}`;
+      const [r] = await tx.$queryRaw<{ n: bigint }[]>`
+        SELECT COUNT(DISTINCT "cardId") AS n FROM "UserCard" WHERE "userId" = ${userId} AND "source" <> 'MARKETPLACE'`;
       return Number(r?.n ?? 0);
     }
     case "TOTAL_CARDS":
-      return tx.userCard.count({ where: { userId } });
+      return tx.userCard.count({ where: { userId, source: { not: "MARKETPLACE" } } });
     case "COLLECTION_VALUE": {
       const [r] = await tx.$queryRaw<{ v: bigint | null }[]>`
-        SELECT SUM(c."currentValue") AS v FROM "UserCard" uc JOIN "Card" c ON c."id" = uc."cardId" WHERE uc."userId" = ${userId}`;
+        SELECT SUM(c."currentValue") AS v FROM "UserCard" uc JOIN "Card" c ON c."id" = uc."cardId"
+        WHERE uc."userId" = ${userId} AND uc."source" <> 'MARKETPLACE'`;
       return Number(r?.v ?? 0);
     }
     case "SETS_COMPLETED":
-      return (await completedSetIds(tx, userId)).length;
+      return (await completedSetIds(tx, userId, { earnedOnly: true })).length;
     case "CHASE_PULLS":
       return tx.packOpeningReward.count({ where: { userId, rarity: "CHASE" } });
     case "SECRET_PULLS":
       return tx.packOpeningReward.count({ where: { userId, rarity: "SECRET_RARE" } });
-    case "MARKET_SALES":
-      return tx.marketplaceTransaction.count({ where: { sellerId: userId } });
+    case "MARKET_SALES": {
+      // Distinct buyers, so wash-trading with one other account doesn't count.
+      const [r] = await tx.$queryRaw<{ n: bigint }[]>`
+        SELECT COUNT(DISTINCT "buyerId") AS n FROM "MarketplaceTransaction" WHERE "sellerId" = ${userId}`;
+      return Number(r?.n ?? 0);
+    }
     case "BIGGEST_PULL": {
       const r = await tx.packOpeningReward.aggregate({ where: { userId }, _max: { value: true } });
       return r._max.value ?? 0;

@@ -25,10 +25,12 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   if (!id) return null;
   const user = await prisma.user.findUnique({
     where: { id },
-    select: { id: true, username: true, email: true, role: true, avatar: true, image: true, level: true, xp: true, suspendedAt: true, isBot: true },
+    select: { id: true, username: true, email: true, role: true, avatar: true, image: true, level: true, xp: true, suspendedAt: true, isBot: true, sessionVersion: true },
   });
   if (!user || user.suspendedAt || user.isBot) return null;
-  const { suspendedAt: _s, isBot: _b, ...rest } = user;
+  // Sessions issued before the latest password change are no longer valid.
+  if ((session.user.sessionVersion ?? 0) !== user.sessionVersion) return null;
+  const { suspendedAt: _s, isBot: _b, sessionVersion: _v, ...rest } = user;
   return rest;
 });
 

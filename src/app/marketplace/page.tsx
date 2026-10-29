@@ -5,14 +5,16 @@ import { MarketplaceView } from "@/components/market/marketplace-view";
 import { prisma } from "@/server/db";
 import { searchListings } from "@/server/services/marketplace";
 import { getSettings } from "@/server/services/settings";
+import { getSessionUser } from "@/server/session";
 
 export const metadata: Metadata = { title: "Marketplace" };
 export const dynamic = "force-dynamic";
 
 export default async function MarketplacePage() {
+  const user = await getSessionUser();
   const [sets, listings, { economy }] = await Promise.all([
     prisma.cardSet.findMany({ where: { cards: { some: { listings: { some: { status: "ACTIVE" } } } } }, orderBy: { name: "asc" }, select: { code: true, name: true } }),
-    searchListings({ sort: "newest", page: 1, limit: 24 }),
+    searchListings({ sort: "newest", page: 1, limit: 24 }, user?.id),
     getSettings(),
   ]);
   return (

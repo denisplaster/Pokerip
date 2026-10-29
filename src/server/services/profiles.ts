@@ -125,8 +125,9 @@ export async function changePassword(userId: string, currentPassword: string, ne
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { passwordHash: true } });
   if (!user.passwordHash) throw new AppError("BAD_REQUEST", "This account signs in with an external provider and has no password.");
   if (!(await verifyPassword(currentPassword, user.passwordHash))) throw new AppError("VALIDATION", "Current password is incorrect.");
-  await prisma.user.update({ where: { id: userId }, data: { passwordHash: await hashPassword(newPassword) } });
-  return { ok: true };
+  // Bumping the session version signs out every existing session, including stolen ones.
+  await prisma.user.update({ where: { id: userId }, data: { passwordHash: await hashPassword(newPassword), sessionVersion: { increment: 1 } } });
+  return { ok: true, signedOut: true };
 }
 
 export async function getAccountSettings(userId: string) {

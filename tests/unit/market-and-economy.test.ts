@@ -80,6 +80,20 @@ describe("seed catalog & economy", () => {
   });
 });
 
+describe("marketplace rules", () => {
+  it("bounds listing prices between the instant-sell price and 4× value", async () => {
+    const { listingPriceBounds, marketplaceFee } = await import("@/lib/market-rules");
+    expect(listingPriceBounds(1000, 7000)).toEqual({ min: 700, max: 4000 });
+    expect(listingPriceBounds(3, 7000)).toEqual({ min: 3, max: 12 });
+    expect(listingPriceBounds(1, 7000).min).toBe(2);
+    expect(marketplaceFee(15, 500)).toBe(1);
+    expect(marketplaceFee(1000, 500)).toBe(50);
+    expect(marketplaceFee(1001, 500)).toBe(51);
+    expect(marketplaceFee(2, 500)).toBe(1);
+    expect(marketplaceFee(1000, 0)).toBe(0);
+  });
+});
+
 describe("economy helpers", () => {
   it("pays instant sales at the configured rate, at least 1 RC", () => {
     expect(instantSellPrice(1000, 7000)).toBe(700);
@@ -107,6 +121,9 @@ describe("economy helpers", () => {
     expect(safeRedirect("//evil.com")).toBe("/");
     expect(safeRedirect("https://evil.com")).toBe("/");
     expect(safeRedirect("/\\evil.com")).toBe("/");
+    expect(safeRedirect("/\t/evil.example")).toBe("/");
+    expect(safeRedirect("/\n/evil.example")).toBe("/");
+    expect(safeRedirect("/packs?qty=5#top")).toBe("/packs?qty=5#top");
     expect(safeRedirect(undefined, "/x")).toBe("/x");
   });
 });

@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCardActions } from "@/hooks/use-card-actions";
-import { LISTING_MAX_PRICE, LISTING_MIN_PRICE } from "@/lib/constants";
+import { listingPriceBounds, marketplaceFee } from "@/lib/market-rules";
 
 export function ListDialog({
   open,
@@ -27,8 +27,9 @@ export function ListDialog({
   const { list } = useCardActions();
   const [price, setPrice] = useState(String(card.currentValue));
   const value = Math.floor(Number(price));
-  const valid = Number.isFinite(value) && value >= LISTING_MIN_PRICE && value <= LISTING_MAX_PRICE;
-  const fee = valid ? Math.floor((value * marketplaceFeeBps) / 10_000) : 0;
+  const bounds = listingPriceBounds(card.currentValue, instantSellBps);
+  const valid = Number.isFinite(value) && value >= bounds.min && value <= bounds.max;
+  const fee = valid ? marketplaceFee(value, marketplaceFeeBps) : 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -53,19 +54,22 @@ export function ListDialog({
               <Input id="price" inputMode="numeric" value={price} onChange={(e) => setPrice(e.target.value.replace(/[^0-9]/g, ""))} aria-invalid={!valid} autoFocus />
               <div className="flex gap-1">
                 {[0.9, 1, 1.15, 1.3].map((m) => (
-                  <button key={m} type="button" onClick={() => setPrice(String(Math.max(1, Math.round(card.currentValue * m))))} className="rounded-md border px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground">
+                  <button key={m} type="button" onClick={() => setPrice(String(Math.min(bounds.max, Math.max(bounds.min, Math.round(card.currentValue * m)))))} className="rounded-md border px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground">
                     {m === 1 ? "At value" : `${m > 1 ? "+" : ""}${Math.round((m - 1) * 100)}%`}
                   </button>
                 ))}
               </div>
             </div>
+            <p className={valid ? "text-[11px] text-muted-foreground" : "text-[11px] text-red-300"}>
+              Allowed range: {bounds.min.toLocaleString()} – {bounds.max.toLocaleString()} RC
+            </p>
             <dl className="space-y-1 text-xs">
               <div className="flex justify-between">
                 <dt className="text-muted-foreground">Virtual value</dt>
                 <dd><RC amount={card.currentValue} /></dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-muted-foreground">Marketplace fee ({marketplaceFeeBps / 100}%)</dt>
+                <dt className="text-muted-foreground">Marketplace fee ({marketplaceFeeBps / 100}%, min 1 RC)</dt>
                 <dd><RC amount={-fee} /></dd>
               </div>
               <div className="flex justify-between border-t pt-1 font-semibold">

@@ -360,12 +360,9 @@ export async function openPacks(input: {
 
       await tx.user.update({ where: { id: userId }, data: { packsOpened: { increment: quantity } } });
       await trackMission(tx, userId, "OPEN_PACKS", quantity, notices);
-      await afterCardsAcquired(tx, userId, draws.flat().map((d) => d.cardId), previouslyOwned, notices, [
-        "PACKS_OPENED",
-        "CHASE_PULLS",
-        "SECRET_PULLS",
-        "BIGGEST_PULL",
-      ]);
+      await afterCardsAcquired(tx, userId, draws.flat().map((d) => d.cardId), previouslyOwned, notices, {
+        extraMetrics: ["PACKS_OPENED", "CHASE_PULLS", "SECRET_PULLS", "BIGGEST_PULL"],
+      });
       await grantXp(tx, userId, xpForPack(pack.price) * quantity, notices);
 
       const wallet = await tx.wallet.findUniqueOrThrow({ where: { userId }, select: { balance: true } });

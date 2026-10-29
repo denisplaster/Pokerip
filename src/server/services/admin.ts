@@ -23,7 +23,8 @@ import { AppError, badRequest, conflict, notFound } from "../errors";
 import { CARD_VIEW_SELECT, invalidatePriceCache, toCardView } from "./cards";
 import { getLatestPackOdds, publishBoxOdds, publishPackOdds } from "./odds";
 import { saveSettings, type SystemSettings } from "./settings";
-import { applyWalletChange } from "./wallet";
+import { getSettings as readSettings } from "./settings";
+import { applyWalletChange, lockWallets } from "./wallet";
 
 export async function audit(tx: Tx, adminId: string, action: string, targetType: string, targetId: string | null, details?: unknown) {
   await tx.adminAuditLog.create({ data: { adminId, action, targetType, targetId, details: details as object | undefined } });
@@ -197,10 +198,13 @@ export async function getUserAdminDetail(userId: string) {
     select: { id: true, type: true, amount: true, balanceBefore: true, balanceAfter: true, description: true, createdAt: true, admin: { select: { username: true } } },
   });
   const ledger = await prisma.walletTransaction.aggregate({ where: { userId }, _sum: { amount: true } });
-  return { user, transactions, ledgerConsistent: (ledger._sum.amount ?? 0) === (user.wallet?.balance ?? 0) };
+  const wallet = user.wallet
+    ? { balance: user.wallet.balance, lifetimeEarned: Number(user.wallet.lifetimeEarned), lifetimeSpent: Number(user.wallet.lifetimeSpent) }
+    : null;
+  return { user: { ...user, wallet }, transactions, ledgerConsistent: (ledger._sum.amount ?? 0) === (user.wallet?.balance ?? 0) };
 }
 
-export async function adjustBalance(adminId: string, userId: string, amount: number, reason: string) {
+export async function adjustBalance(adminId: string, userId: string, amount: number, reason: string, idempotencyKey?: string) {
   return withTransaction(async (tx) => {
     const target = await tx.user.findUnique({ where: { id: userId }, select: { id: true, username: true } });
     if (!target) throw notFound("User");
@@ -210,6 +214,8 @@ export async function adjustBalance(adminId: string, userId: string, amount: num
       type: "ADMIN_ADJUSTMENT",
       description: `Admin adjustment: ${reason}`,
       adminId,
+      // A double-submitted form reuses its key and is rejected as a duplicate.
+      idempotencyKey: idempotencyKey ? `admin-adjust:${adminId}:${idempotencyKey}` : undefined,
       metadata: { reason },
     });
     await audit(tx, adminId, "wallet.adjust", "User", userId, { amount, reason, balanceAfter: res.balance, username: target.username });
@@ -220,6 +226,9 @@ export async function adjustBalance(adminId: string, userId: string, amount: num
 export async function updateUserAdmin(adminId: string, userId: string, input: { role?: "USER" | "ADMIN"; suspended?: boolean }) {
   if (userId === adminId && (input.role === "USER" || input.suspended)) throw badRequest("You can't demote or suspend your own account.");
   return withTransaction(async (tx) => {
+    // Follow the global lock order (wallet before user/listing rows) so this can't
+    // deadlock with a marketplace purchase of the same user's listing.
+    await lockWallets(tx, [userId]);
     const user = await tx.user.findUnique({ where: { id: userId } });
     if (!user) throw notFound("User");
     const data: Prisma.UserUpdateInput = {};
@@ -230,8 +239,9 @@ export async function updateUserAdmin(adminId: string, userId: string, input: { 
       // Pull a suspended user's listings off the market.
       const listings = await tx.marketplaceListing.findMany({ where: { sellerId: userId, status: "ACTIVE" }, select: { id: true, userCardId: true } });
       for (const l of listings) {
-        await tx.marketplaceListing.update({ where: { id: l.id }, data: { status: "CANCELLED", cancelledAt: new Date() } });
-        if (l.userCardId) await tx.userCard.update({ where: { id: l.userCardId }, data: { status: "OWNED" } });
+        // Conditional update: never overwrite a listing that sold in the meantime.
+        const cancelled = await tx.marketplaceListing.updateMany({ where: { id: l.id, status: "ACTIVE" }, data: { status: "CANCELLED", cancelledAt: new Date() } });
+        if (cancelled.count && l.userCardId) await tx.userCard.updateMany({ where: { id: l.userCardId, userId, status: "LISTED" }, data: { status: "OWNED" } });
       }
     }
     await audit(tx, adminId, "user.update", "User", userId, { ...input, username: user.username });
@@ -240,6 +250,30 @@ export async function updateUserAdmin(adminId: string, userId: string, input: { 
 }
 
 // ── Packs ────────────────────────────────────────────────────────────────────
+
+/**
+ * Refuses configurations where opening a pack and instantly selling every card
+ * back to the platform would, on average, return more RC than the pack costs —
+ * that would let players mint unlimited coins.
+ */
+async function assertPackNotArbitrage(tx: Tx, packId: string, instantSellBps?: number) {
+  const pack = await tx.pack.findUnique({ where: { id: packId }, select: { name: true, price: true, isActive: true } });
+  if (!pack || !pack.isActive) return;
+  const version = await tx.oddsVersion.findFirst({ where: { packId }, orderBy: { version: "desc" } });
+  if (!version) return;
+  const snapshot = version.data as unknown as PackOddsSnapshot;
+  const ids = snapshot.tiers.flatMap((t) => t.cards.map((c) => c.cardId));
+  const cards = await tx.card.findMany({ where: { id: { in: ids } }, select: { id: true, currentValue: true } });
+  const ev = expectedPackValue(snapshot, new Map(cards.map((c) => [c.id, c.currentValue])));
+  const bps = instantSellBps ?? (await readSettings(tx)).economy.instantSellBps;
+  const sellBack = (ev * bps) / 10_000;
+  if (sellBack >= pack.price) {
+    throw new AppError(
+      "VALIDATION",
+      `${pack.name}: opening and instantly selling would return ${Math.round(sellBack).toLocaleString()} RC on average, more than its ${pack.price.toLocaleString()} RC price. Raise the price or lower the odds.`,
+    );
+  }
+}
 
 export async function getPackAdmin(packId: string) {
   const pack = await prisma.pack.findUnique({
@@ -283,6 +317,7 @@ export async function savePackDetails(
       const pack = await tx.pack.update({ where: { id: packId }, data: input });
       // cardsPerPack is part of the odds snapshot; publish if the configuration is valid.
       if (before.cardsPerPack !== input.cardsPerPack) await publishPackOdds(tx, packId, adminId);
+      await assertPackNotArbitrage(tx, packId);
       await audit(tx, adminId, "pack.update", "Pack", packId, { before: { ...before, createdAt: undefined, updatedAt: undefined }, after: input });
       return pack;
     }
@@ -320,6 +355,7 @@ export async function savePackOdds(adminId: string, packId: string, input: { odd
     await tx.packDropPool.deleteMany({ where: { packId } });
     await tx.packDropPool.createMany({ data: input.pool.map((p) => ({ packId, cardId: p.cardId, weight: p.weight })) });
     const version = await publishPackOdds(tx, packId, adminId);
+    await assertPackNotArbitrage(tx, packId);
     await audit(tx, adminId, "pack.odds", "Pack", packId, {
       fromVersion: before?.version.version ?? null,
       toVersion: version.version,
@@ -612,6 +648,8 @@ export async function listTransactionsAdmin(query: { type?: TransactionType; use
 
 export async function saveSystemSettings(adminId: string, settings: SystemSettings) {
   return withTransaction(async (tx) => {
+    const active = await tx.pack.findMany({ where: { isActive: true }, select: { id: true } });
+    for (const p of active) await assertPackNotArbitrage(tx, p.id, settings.economy.instantSellBps);
     await saveSettings(tx, settings, adminId);
     await audit(tx, adminId, "settings.update", "SystemSetting", null, settings);
     return settings;

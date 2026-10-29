@@ -92,6 +92,7 @@ export const leaderboardQuerySchema = z.object({
 // ── Admin ────────────────────────────────────────────────────────────────────
 
 export const adminAdjustBalanceSchema = z.object({
+  idempotencyKey: idempotencyKey.optional(),
   amount: z
     .number()
     .int()
@@ -118,7 +119,7 @@ export const adminPackSchema = z.object({
     .regex(/^[a-z0-9-]+$/, "Lowercase letters, numbers and dashes only"),
   tagline: z.string().trim().max(80),
   description: z.string().trim().max(400),
-  price: z.number().int().min(0).max(10_000_000),
+  price: z.number().int().min(1).max(10_000_000),
   cardsPerPack: z.number().int().min(1).max(20),
   theme: z.string().max(20),
   isActive: z.boolean(),
@@ -162,7 +163,7 @@ export const adminBoxSchema = z.object({
     .regex(/^[a-z0-9-]+$/),
   tagline: z.string().trim().max(80),
   description: z.string().trim().max(400),
-  price: z.number().int().min(0).max(10_000_000),
+  price: z.number().int().min(1).max(10_000_000),
   theme: z.string().max(20),
   isActive: z.boolean(),
   featured: z.boolean(),

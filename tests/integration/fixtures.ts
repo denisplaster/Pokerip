@@ -136,7 +136,8 @@ export async function seedFixture(): Promise<Fixture> {
 }
 
 let counter = 0;
-export async function createUser(opts: { balance?: number; role?: "USER" | "ADMIN" } = {}) {
+/** Test users default to level 3 so they can trade on the marketplace. */
+export async function createUser(opts: { balance?: number; role?: "USER" | "ADMIN"; level?: number } = {}) {
   const n = ++counter;
   const user = await withTransaction((tx) => createUserWithWallet(tx, { username: `user${n}_${Date.now() % 100000}`, email: `user${n}_${Date.now()}@test.dev` }));
   if (opts.balance !== undefined) {
@@ -150,7 +151,7 @@ export async function createUser(opts: { balance?: number; role?: "USER" | "ADMI
       await prisma.wallet.update({ where: { id: wallet.id }, data: { balance: opts.balance } });
     }
   }
-  if (opts.role) await prisma.user.update({ where: { id: user.id }, data: { role: opts.role } });
+  await prisma.user.update({ where: { id: user.id }, data: { level: opts.level ?? 3, ...(opts.role ? { role: opts.role } : {}) } });
   return user;
 }
 

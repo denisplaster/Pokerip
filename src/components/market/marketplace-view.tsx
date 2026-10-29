@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, LoaderCircle, Search, ShoppingCart, Tag, Undo2 } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, LoaderCircle, Lock, Search, ShoppingCart, Tag, Undo2 } from "lucide-react";
 import Link from "next/link";
 import { useDeferredValue, useMemo, useState } from "react";
 import { RC } from "@/components/common/coin-icon";
@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/common/page-header";
 import { PokeCard } from "@/components/cards/poke-card";
 import { RarityBadge } from "@/components/cards/rarity-badge";
 import { useUser } from "@/components/providers";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCardActions } from "@/hooks/use-card-actions";
+import { useWallet } from "@/hooks/use-wallet";
+import { MARKETPLACE_MIN_LEVEL } from "@/lib/market-rules";
 import { api } from "@/lib/api-client";
 import { formatPercentChange, timeAgo } from "@/lib/format";
 import { RARITIES, RARITY_META, type RarityKey } from "@/lib/rarity";
@@ -39,8 +42,7 @@ interface Sale {
   price: number;
   fee: number;
   createdAt: string;
-  buyerId: string;
-  sellerId: string;
+  viewerRole: "buyer" | "seller" | null;
   buyer: { username: string };
   seller: { username: string };
   card: CardView;
@@ -48,10 +50,21 @@ interface Sale {
 
 export function MarketplaceView({ sets, initialListings }: { sets: { code: string; name: string }[]; initialListings: ListingsPage }) {
   const user = useUser();
+  const { data: wallet } = useWallet(Boolean(user));
   const [tab, setTab] = useState("browse");
   const [sellOpen, setSellOpen] = useState(false);
+  const locked = Boolean(user) && (wallet?.level ?? user?.level ?? 1) < MARKETPLACE_MIN_LEVEL;
   return (
     <Tabs value={tab} onValueChange={setTab}>
+      {locked && (
+        <Alert variant="info">
+          <Lock />
+          <AlertTitle>Trading unlocks at level {MARKETPLACE_MIN_LEVEL}</AlertTitle>
+          <AlertDescription>
+            You can browse everything now. Open a few packs or claim daily rewards to level up, then buy and list cards.
+          </AlertDescription>
+        </Alert>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <TabsList>
           <TabsTrigger value="browse">Browse</TabsTrigger>
@@ -60,7 +73,7 @@ export function MarketplaceView({ sets, initialListings }: { sets: { code: strin
           <TabsTrigger value="index">Price index</TabsTrigger>
         </TabsList>
         {user ? (
-          <Button onClick={() => setSellOpen(true)}>
+          <Button onClick={() => setSellOpen(true)} disabled={locked}>
             <Tag /> Sell a card
           </Button>
         ) : (
@@ -174,7 +187,7 @@ function Browse({ sets, initial }: { sets: { code: string; name: string }[]; ini
       ) : (
         <div className={cn("grid grid-cols-2 gap-4 transition-opacity sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6", isFetching && "opacity-70")}>
           {data.items.map((l) => {
-            const mine = user?.id === l.sellerId;
+            const mine = l.isMine;
             return (
               <article key={l.id} className="group flex flex-col gap-2 rounded-2xl border bg-card/70 p-2.5">
                 <Link href={`/collection/${l.card.id}`} className="block transition-transform group-hover:-translate-y-1">
@@ -322,8 +335,8 @@ function SaleHistory() {
                   <TableCell className="hidden sm:table-cell"><RarityBadge rarity={s.card.rarity} short /></TableCell>
                   <TableCell className="text-right">
                     <RC amount={s.price} />
-                    {user && (s.buyerId === user.id || s.sellerId === user.id) && (
-                      <span className={cn("block text-[11px]", s.buyerId === user.id ? "text-rose-300" : "text-emerald-300")}>{s.buyerId === user.id ? "You bought" : "You sold"}</span>
+                    {s.viewerRole && (
+                      <span className={cn("block text-[11px]", s.viewerRole === "buyer" ? "text-rose-300" : "text-emerald-300")}>{s.viewerRole === "buyer" ? "You bought" : "You sold"}</span>
                     )}
                   </TableCell>
                   <TableCell className="hidden text-xs text-muted-foreground md:table-cell">{s.seller.username} → {s.buyer.username}</TableCell>

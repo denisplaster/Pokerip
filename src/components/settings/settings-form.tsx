@@ -3,6 +3,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { Check, Eye, EyeOff, KeyRound, LoaderCircle, Save, Volume2 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { signOut } from "next-auth/react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { UserAvatar } from "@/components/common/user-avatar";
@@ -133,9 +134,10 @@ function PasswordSection({ hasPassword }: { hasPassword: boolean }) {
   const change = useMutation({
     mutationFn: () => api("/api/profile/password", { body: { currentPassword: current, newPassword: next } }),
     onSuccess: () => {
-      toast.success("Password updated");
+      toast.success("Password updated — please sign in again", { description: "All other sessions have been signed out." });
       setCurrent("");
       setNext("");
+      setTimeout(() => void signOut({ redirectTo: "/login" }), 1200);
     },
     onError: (e: Error) => toast.error(e.message),
   });

@@ -25,3 +25,25 @@ export function rateLimit(key: string, limit: number, windowMs: number) {
 export function resetRateLimits() {
   buckets.clear();
 }
+
+/**
+ * Best-effort client IP. Prefers `x-real-ip` (set by Vercel and most reverse
+ * proxies), then the right-most `x-forwarded-for` hop — the one appended by our
+ * own proxy — because the left-most entries are client-controlled.
+ */
+export function clientIpFromHeaders(headers: Headers | Record<string, string | string[] | undefined> | undefined) {
+  if (!headers) return "unknown";
+  const get = (name: string) => {
+    if (headers instanceof Headers) return headers.get(name);
+    const v = headers[name];
+    return Array.isArray(v) ? v[v.length - 1] : (v ?? null);
+  };
+  const real = get("x-real-ip");
+  if (real) return real.trim();
+  const forwarded = get("x-forwarded-for");
+  if (forwarded) {
+    const hops = forwarded.split(",").map((h) => h.trim()).filter(Boolean);
+    if (hops.length) return hops[hops.length - 1];
+  }
+  return "unknown";
+}

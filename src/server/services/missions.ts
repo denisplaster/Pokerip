@@ -62,15 +62,17 @@ export async function claimMission(userId: string, missionId: string, now = new 
 
 /** Current value of each achievement metric for display (progress bars). */
 export async function achievementMetrics(db: Tx | typeof prisma, userId: string): Promise<Record<AchievementMetric, number>> {
+  // Mirrors progression.computeMetric: holdings count only self-earned copies.
   const [user, unique, total, value, sets, chase, secret, sales, biggest] = await Promise.all([
     db.user.findUniqueOrThrow({ where: { id: userId }, select: { packsOpened: true, level: true, loginStreak: true } }),
-    db.$queryRaw<{ n: bigint }[]>`SELECT COUNT(DISTINCT "cardId") AS n FROM "UserCard" WHERE "userId" = ${userId}`,
-    db.userCard.count({ where: { userId } }),
-    db.$queryRaw<{ v: bigint | null }[]>`SELECT SUM(c."currentValue") AS v FROM "UserCard" uc JOIN "Card" c ON c."id" = uc."cardId" WHERE uc."userId" = ${userId}`,
-    completedSetIds(db, userId),
+    db.$queryRaw<{ n: bigint }[]>`SELECT COUNT(DISTINCT "cardId") AS n FROM "UserCard" WHERE "userId" = ${userId} AND "source" <> 'MARKETPLACE'`,
+    db.userCard.count({ where: { userId, source: { not: "MARKETPLACE" } } }),
+    db.$queryRaw<{ v: bigint | null }[]>`
+      SELECT SUM(c."currentValue") AS v FROM "UserCard" uc JOIN "Card" c ON c."id" = uc."cardId" WHERE uc."userId" = ${userId} AND uc."source" <> 'MARKETPLACE'`,
+    completedSetIds(db, userId, { earnedOnly: true }),
     db.packOpeningReward.count({ where: { userId, rarity: "CHASE" } }),
     db.packOpeningReward.count({ where: { userId, rarity: "SECRET_RARE" } }),
-    db.marketplaceTransaction.count({ where: { sellerId: userId } }),
+    db.$queryRaw<{ n: bigint }[]>`SELECT COUNT(DISTINCT "buyerId") AS n FROM "MarketplaceTransaction" WHERE "sellerId" = ${userId}`,
     db.packOpeningReward.aggregate({ where: { userId }, _max: { value: true } }),
   ]);
   return {
@@ -81,7 +83,7 @@ export async function achievementMetrics(db: Tx | typeof prisma, userId: string)
     SETS_COMPLETED: sets.length,
     CHASE_PULLS: chase,
     SECRET_PULLS: secret,
-    MARKET_SALES: sales,
+    MARKET_SALES: Number(sales[0]?.n ?? 0),
     LEVEL: user.level,
     LOGIN_STREAK: user.loginStreak,
     BIGGEST_PULL: biggest._max.value ?? 0,

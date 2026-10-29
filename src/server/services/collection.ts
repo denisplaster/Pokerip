@@ -191,20 +191,8 @@ export async function sellDuplicates(userId: string, rarities: RarityKey[], keep
     else toSell.push(c.id);
   }
   if (!toSell.length) return { sold: 0, total: 0, balance: null, duplicatesSold: 0, notices: [] as Notices };
-  let sold = 0;
-  let total = 0;
-  let balance = 0;
-  let duplicatesSold = 0;
-  const notices: Notices = [];
-  for (let i = 0; i < toSell.length; i += 200) {
-    const res = await sellCards(userId, toSell.slice(i, i + 200));
-    sold += res.sold;
-    total += res.total;
-    balance = res.balance;
-    duplicatesSold += res.duplicatesSold;
-    notices.push(...res.notices);
-  }
-  return { sold, total, balance, duplicatesSold, notices };
+  // One transaction: either every selected duplicate is sold, or none are.
+  return sellCards(userId, toSell);
 }
 
 export async function getFavorites(userId: string, limit = 12) {

@@ -48,8 +48,8 @@ export async function applyWalletChange(tx: Tx, change: WalletChange) {
     where: { id: wallet.id },
     data: {
       balance: after,
-      ...(change.amount > 0 ? { lifetimeEarned: { increment: change.amount } } : {}),
-      ...(change.amount < 0 ? { lifetimeSpent: { increment: -change.amount } } : {}),
+      ...(change.amount > 0 ? { lifetimeEarned: { increment: BigInt(change.amount) } } : {}),
+      ...(change.amount < 0 ? { lifetimeSpent: { increment: BigInt(-change.amount) } } : {}),
     },
   });
   const transaction = await tx.walletTransaction.create({
@@ -86,7 +86,10 @@ export async function getWalletSummary(userId: string) {
     where: { userId },
     select: { balance: true, lifetimeEarned: true, lifetimeSpent: true },
   });
-  return wallet ?? { balance: 0, lifetimeEarned: 0, lifetimeSpent: 0 };
+  // Lifetime totals are BIGINT in the database; they comfortably fit in a JS number.
+  return wallet
+    ? { balance: wallet.balance, lifetimeEarned: Number(wallet.lifetimeEarned), lifetimeSpent: Number(wallet.lifetimeSpent) }
+    : { balance: 0, lifetimeEarned: 0, lifetimeSpent: 0 };
 }
 
 export async function listTransactions(userId: string, opts: { cursor?: string; limit?: number } = {}) {

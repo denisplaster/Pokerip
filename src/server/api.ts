@@ -3,7 +3,7 @@ import { ZodError, type ZodType } from "zod";
 import { OddsConfigError } from "@/lib/probability";
 import { isUniqueViolation } from "./db";
 import { AppError } from "./errors";
-import { rateLimit } from "./rate-limit";
+import { clientIpFromHeaders, rateLimit } from "./rate-limit";
 import { requireApiAdmin, requireApiUser, getSessionUser, type SessionUser } from "./session";
 
 type AuthMode = "user" | "admin" | "optional" | "none";
@@ -124,10 +124,12 @@ export function parseSearch<T>(req: NextRequest, schema: ZodType<T>): T {
  * POST/PUT/PATCH/DELETE, so a mismatch means another site is submitting the request.
  */
 function assertSameOrigin(req: NextRequest) {
-  const contentType = req.headers.get("content-type") ?? "";
-  if (req.method !== "DELETE" && !contentType.includes("application/json")) {
+  const mime = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (req.method !== "DELETE" && mime !== "application/json") {
     throw new AppError("BAD_REQUEST", "Expected a JSON request.");
   }
+  // Modern browsers label every request; reject anything they mark as cross-site.
+  if (req.headers.get("sec-fetch-site") === "cross-site") throw new AppError("FORBIDDEN", "Cross-site requests are not allowed.");
   const origin = req.headers.get("origin");
   if (!origin) return; // Non-browser clients (tests, curl) don't send Origin.
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
@@ -141,5 +143,5 @@ function assertSameOrigin(req: NextRequest) {
 }
 
 function clientIp(req: NextRequest) {
-  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "anonymous";
+  return clientIpFromHeaders(req.headers);
 }

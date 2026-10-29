@@ -28,10 +28,17 @@ describe("admin: balances & users", () => {
     await assertLedgerConsistent(user.id);
   });
 
+  it("applies a double-submitted adjustment only once", async () => {
+    const user = await createUser({ balance: 0 });
+    await adjustBalance(admin.id, user.id, 500, "Event prize", "form-key-123");
+    await expect(adjustBalance(admin.id, user.id, 500, "Event prize", "form-key-123")).rejects.toThrow();
+    expect(await balanceOf(user.id)).toBe(500);
+  });
+
   it("suspends users (pulling their listings) and blocks self-demotion", async () => {
     const user = await createUser();
     const copy = await giveCard(user.id, fx.cards[0].id);
-    await createListing(user.id, copy.id, 50);
+    await createListing(user.id, copy.id, 30);
     await updateUserAdmin(admin.id, user.id, { suspended: true });
     expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).suspendedAt).not.toBeNull();
     expect(await prisma.marketplaceListing.count({ where: { sellerId: user.id, status: "ACTIVE" } })).toBe(0);
@@ -56,7 +63,8 @@ describe("admin: odds configuration", () => {
   });
 
   it("publishes a new version that future openings use, keeping old openings verifiable", async () => {
-    const user = await createUser({ balance: 1_000 });
+    await prisma.pack.update({ where: { id: fx.packId }, data: { price: 2_000 } });
+    const user = await createUser({ balance: 10_000 });
     const before = await openPacks({ userId: user.id, pack: fx.packId, quantity: 1, idempotencyKey: key() });
     const pool = await currentPool();
     const odds = RARITIES.map((r) => ({ rarity: r, weightPpm: r === "RARE" ? 1_000_000 : 0 }));
@@ -66,6 +74,14 @@ describe("admin: odds configuration", () => {
     expect(after.packs[0].cards.every((c) => c.rarity === "RARE")).toBe(true);
     expect((await verifyOpening(before.packs[0].openingId)).valid).toBe(true);
     expect(await prisma.adminAuditLog.count({ where: { action: "pack.odds" } })).toBe(1);
+  });
+
+  it("refuses pack settings that would let players profit by opening and instantly selling", async () => {
+    const { savePackDetails } = await import("@/server/services/admin");
+    const details = { name: "Test Pack", slug: "test-pack", tagline: "", description: "", price: 100, cardsPerPack: 5, theme: "trainer", isActive: true, featured: false, sortOrder: 0 };
+    // The fixture pack's expected value (~990 RC) is far above a 100 RC price.
+    await expect(savePackDetails(admin.id, fx.packId, details)).rejects.toThrow(/instantly selling/);
+    await expect(savePackDetails(admin.id, fx.packId, { ...details, price: 2_000 })).resolves.toBeTruthy();
   });
 
   it("simulates published odds with a good statistical fit", async () => {
