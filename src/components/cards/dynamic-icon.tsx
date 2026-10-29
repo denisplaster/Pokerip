@@ -1,0 +1,61 @@
+import {
+  Award,
+  BadgeCheck,
+  BookOpen,
+  Boxes,
+  CalendarCheck,
+  CalendarHeart,
+  ChevronsUp,
+  Crown,
+  Diamond,
+  Flame,
+  Gem,
+  Handshake,
+  Landmark,
+  Layers,
+  Library,
+  Medal,
+  Package,
+  PackageOpen,
+  Sparkles,
+  Star,
+  Store,
+  Trophy,
+  TrendingUp,
+  Zap,
+  type LucideIcon,
+  type LucideProps,
+} from "lucide-react";
+
+const ICONS: Record<string, LucideIcon> = {
+  Award,
+  BadgeCheck,
+  BookOpen,
+  Boxes,
+  CalendarCheck,
+  CalendarHeart,
+  ChevronsUp,
+  Crown,
+  Diamond,
+  Flame,
+  Gem,
+  Handshake,
+  Landmark,
+  Layers,
+  Library,
+  Medal,
+  Package,
+  PackageOpen,
+  Sparkles,
+  Star,
+  Store,
+  Trophy,
+  TrendingUp,
+  Zap,
+};
+
+/** Renders an achievement icon stored by name in the database. */
+export function DynamicIcon({ name, ...props }: { name: string } & LucideProps) {
+  const Icon = ICONS[name] ?? Trophy;
+  return <Icon {...props} />;
+}

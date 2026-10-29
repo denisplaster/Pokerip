@@ -1,0 +1,289 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* RipVault is dark-first: charcoal surfaces with electric purple, gold and cyan accents. */
+:root {
+  --radius: 0.85rem;
+  --background: oklch(0.145 0.012 285);
+  --foreground: oklch(0.965 0.006 285);
+  --card: oklch(0.185 0.016 285);
+  --card-foreground: oklch(0.965 0.006 285);
+  --popover: oklch(0.19 0.018 285);
+  --popover-foreground: oklch(0.965 0.006 285);
+  --primary: oklch(0.55 0.24 293);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.235 0.02 285);
+  --secondary-foreground: oklch(0.95 0.006 285);
+  --muted: oklch(0.225 0.016 285);
+  --muted-foreground: oklch(0.7 0.02 285);
+  --accent: oklch(0.27 0.03 290);
+  --accent-foreground: oklch(0.98 0.005 285);
+  --destructive: oklch(0.64 0.22 25);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.6 0.24 293);
+  --gold: oklch(0.84 0.16 85);
+  --cyan: oklch(0.8 0.14 210);
+  --success: oklch(0.74 0.17 155);
+  --chart-1: oklch(0.62 0.24 293);
+  --chart-2: oklch(0.8 0.14 210);
+  --chart-3: oklch(0.84 0.16 85);
+  --chart-4: oklch(0.7 0.2 350);
+  --chart-5: oklch(0.74 0.17 155);
+}
+
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-gold: var(--gold);
+  --color-cyan: var(--cyan);
+  --color-success: var(--success);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-shine: shine 3.5s ease-in-out infinite;
+  --animate-holo: holo-shift 6s linear infinite;
+  --animate-spin-slow: spin 12s linear infinite;
+  --animate-pulse-glow: pulse-glow 2.4s ease-in-out infinite;
+  --animate-shake: shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) infinite;
+  --animate-marquee: marquee 40s linear infinite;
+
+  @keyframes float {
+    0%,
+    100% {
+      transform: translateY(0) rotate(-2deg);
+    }
+    50% {
+      transform: translateY(-14px) rotate(2deg);
+    }
+  }
+  @keyframes shine {
+    0% {
+      transform: translateX(-120%) skewX(-20deg);
+    }
+    60%,
+    100% {
+      transform: translateX(220%) skewX(-20deg);
+    }
+  }
+  @keyframes holo-shift {
+    0% {
+      background-position: 0% 50%;
+    }
+    100% {
+      background-position: 200% 50%;
+    }
+  }
+  @keyframes pulse-glow {
+    0%,
+    100% {
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+  @keyframes shake {
+    10%,
+    90% {
+      transform: translate3d(-1px, 0, 0) rotate(-0.5deg);
+    }
+    20%,
+    80% {
+      transform: translate3d(2px, 0, 0) rotate(0.6deg);
+    }
+    30%,
+    50%,
+    70% {
+      transform: translate3d(-3px, 0, 0) rotate(-1deg);
+    }
+    40%,
+    60% {
+      transform: translate3d(3px, 0, 0) rotate(1deg);
+    }
+  }
+  @keyframes marquee {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 45%, transparent);
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .text-gradient-gold {
+    background: linear-gradient(120deg, #fde68a, #f5c542 40%, #f59e0b 70%, #fde68a);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .text-gradient-brand {
+    background: linear-gradient(110deg, #c4b5fd, #8b5cf6 35%, #22d3ee 75%, #a5f3fc);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, oklch(1 0 0 / 4%) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(1 0 0 / 4%) 1px, transparent 1px);
+    background-size: 44px 44px;
+  }
+  .glass {
+    background: color-mix(in oklch, var(--card) 72%, transparent);
+    backdrop-filter: blur(14px) saturate(140%);
+  }
+  .surface {
+    background: linear-gradient(180deg, oklch(1 0 0 / 4%), oklch(1 0 0 / 1.5%));
+  }
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+  .backface-hidden {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+  .perspective {
+    perspective: 1200px;
+  }
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  .mask-fade-x {
+    mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent);
+  }
+}
+
+/* ── Holographic card finish ─────────────────────────────────────────────── */
+
+.holo-layer {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  mix-blend-mode: color-dodge;
+  opacity: var(--holo-opacity, 0.35);
+  background:
+    radial-gradient(circle at var(--mx, 50%) var(--my, 50%), oklch(1 0 0 / 45%), transparent 45%),
+    linear-gradient(
+      115deg,
+      transparent 20%,
+      oklch(0.85 0.17 200 / 55%) 36%,
+      oklch(0.8 0.2 330 / 55%) 46%,
+      oklch(0.9 0.16 90 / 55%) 56%,
+      oklch(0.75 0.2 150 / 50%) 66%,
+      transparent 80%
+    );
+  background-size:
+    100% 100%,
+    250% 250%;
+  background-position:
+    center,
+    var(--bgx, 50%) var(--bgy, 50%);
+  transition: opacity 0.3s ease;
+}
+
+.rainbow-border {
+  background: conic-gradient(from var(--angle, 0deg), #f472b6, #a78bfa, #22d3ee, #34d399, #facc15, #fb923c, #f472b6);
+  animation: rainbow-rotate 3s linear infinite;
+}
+
+@property --angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes rainbow-rotate {
+  to {
+    --angle: 360deg;
+  }
+}
+
+.gold-sweep {
+  background: linear-gradient(110deg, transparent 30%, oklch(0.92 0.15 90 / 70%) 50%, transparent 70%);
+  background-size: 250% 100%;
+  animation: holo-shift 2.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Chart tokens (validated against the dark card surface) ──────────────── */
+:root {
+  --viz-surface: #18171f;
+  --viz-grid: oklch(1 0 0 / 7%);
+  --viz-axis: oklch(0.7 0.02 285);
+  --viz-accent: #a78bfa;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+}

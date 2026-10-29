@@ -1,0 +1,846 @@
+// RipVault database schema.
+//
+// All Rip Coin (RC) amounts are stored as integers. Rip Coins are a fictional,
+// non-redeemable currency: nothing in this schema represents real money.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum ProfileVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+/// Ordered from most to least common. Order matters for the probability engine.
+enum Rarity {
+  COMMON
+  UNCOMMON
+  RARE
+  ULTRA_RARE
+  SECRET_RARE
+  CHASE
+}
+
+enum CardCategory {
+  VINTAGE
+  MODERN
+  ILLUSTRATION
+  GRADED
+  PROMO
+}
+
+enum TransactionType {
+  SIGNUP_BONUS
+  PACK_PURCHASE
+  MYSTERY_BOX_PURCHASE
+  MYSTERY_BOX_REWARD
+  CARD_SALE
+  MARKETPLACE_PURCHASE
+  MARKETPLACE_SALE
+  DAILY_REWARD
+  MISSION_REWARD
+  ACHIEVEMENT_REWARD
+  LEVEL_UP_REWARD
+  ADMIN_ADJUSTMENT
+}
+
+enum CardSource {
+  PACK
+  MYSTERY_BOX
+  MARKETPLACE
+  ADMIN
+}
+
+enum UserCardStatus {
+  OWNED
+  LISTED
+}
+
+enum ListingStatus {
+  ACTIVE
+  SOLD
+  CANCELLED
+}
+
+enum MysteryBoxRewardType {
+  CARD
+  CARD_BUNDLE
+  COINS
+  PACK_VOUCHER
+  COLLECTIBLE
+}
+
+enum VoucherSource {
+  DAILY_REWARD
+  MYSTERY_BOX
+  ADMIN
+}
+
+enum MissionType {
+  OPEN_PACKS
+  COLLECT_UNIQUE
+  COMPLETE_SET
+  SELL_DUPLICATE
+  EARN_COINS
+  OPEN_MYSTERY_BOX
+  LIST_ON_MARKETPLACE
+}
+
+enum MissionPeriod {
+  DAILY
+  WEEKLY
+  ONCE
+}
+
+enum AchievementTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+enum AchievementMetric {
+  PACKS_OPENED
+  UNIQUE_CARDS
+  TOTAL_CARDS
+  COLLECTION_VALUE
+  SETS_COMPLETED
+  CHASE_PULLS
+  SECRET_PULLS
+  MARKET_SALES
+  LEVEL
+  LOGIN_STREAK
+  BIGGEST_PULL
+}
+
+enum ActivityType {
+  BIG_PULL
+  MYSTERY_BOX_WIN
+  ACHIEVEMENT_UNLOCKED
+  LEVEL_UP
+  MARKETPLACE_SALE
+  SET_COMPLETED
+}
+
+enum OddsKind {
+  PACK
+  MYSTERY_BOX
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Users & auth
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id                String            @id @default(cuid())
+  username          String            @unique
+  name              String?
+  email             String?           @unique
+  emailVerified     DateTime?
+  image             String?
+  /// Preset avatar key used when no image is set.
+  avatar            String            @default("pikachu")
+  passwordHash      String?
+  role              Role              @default(USER)
+  bio               String?
+  profileVisibility ProfileVisibility @default(PUBLIC)
+  xp                Int               @default(0)
+  level             Int               @default(1)
+  loginStreak       Int               @default(0)
+  lastDailyClaimAt  DateTime?
+  packsOpened       Int               @default(0)
+  boxesOpened       Int               @default(0)
+  /// Seeded demo collectors. They cannot sign in (no password).
+  isBot             Boolean           @default(false)
+  suspendedAt       DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  accounts            Account[]
+  wallet              Wallet?
+  transactions        WalletTransaction[]      @relation("TransactionUser")
+  adminAdjustments    WalletTransaction[]      @relation("TransactionAdmin")
+  cards               UserCard[]
+  favorites           FavoriteCard[]
+  packOpenings        PackOpening[]
+  packRewards         PackOpeningReward[]
+  boxOpenings         MysteryBoxOpening[]
+  listings            MarketplaceListing[]     @relation("ListingSeller")
+  purchases           MarketplaceListing[]     @relation("ListingBuyer")
+  buys                MarketplaceTransaction[] @relation("MarketBuyer")
+  sales               MarketplaceTransaction[] @relation("MarketSeller")
+  vouchers            PackVoucher[]
+  dailyClaims         DailyRewardClaim[]
+  missions            UserMission[]
+  achievements        UserAchievement[]
+  collectibles        UserCollectible[]
+  activity            ActivityEvent[]
+  auditLogs           AdminAuditLog[]
+
+  @@index([level, xp])
+  @@index([createdAt])
+}
+
+/// OAuth account links (GitHub / Discord) when those providers are configured.
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  createdAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wallet & ledger
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Wallet {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  /// Current Rip Coin balance. A CHECK constraint keeps it >= 0.
+  balance        Int      @default(0)
+  lifetimeEarned Int      @default(0)
+  lifetimeSpent  Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@index([balance])
+}
+
+/// Immutable, append-only ledger. Every balance change writes exactly one row.
+model WalletTransaction {
+  id             String          @id @default(cuid())
+  walletId       String
+  userId         String
+  type           TransactionType
+  /// Signed amount: negative for debits, positive for credits.
+  amount         Int
+  balanceBefore  Int
+  balanceAfter   Int
+  description    String
+  /// Prevents the same logical operation from being applied twice.
+  idempotencyKey String?         @unique
+  packId         String?
+  cardId         String?
+  packOpeningBatchId String?
+  mysteryBoxId   String?
+  mysteryBoxOpeningId String?
+  listingId      String?
+  adminId        String?
+  metadata       Json?
+  createdAt      DateTime        @default(now())
+
+  wallet  Wallet      @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user    User        @relation("TransactionUser", fields: [userId], references: [id], onDelete: Cascade)
+  admin   User?       @relation("TransactionAdmin", fields: [adminId], references: [id], onDelete: SetNull)
+  pack    Pack?       @relation(fields: [packId], references: [id], onDelete: SetNull)
+  card    Card?       @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  mysteryBox MysteryBox? @relation(fields: [mysteryBoxId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Card catalog
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CardSet {
+  id           String   @id @default(cuid())
+  /// Short code, e.g. "base1". Matches TCGdex set ids where applicable.
+  code         String   @unique
+  name         String
+  series       String
+  releaseYear  Int
+  /// Printed set size (for display); completion uses cards in this catalog.
+  printedTotal Int?
+  description  String?
+  createdAt    DateTime @default(now())
+
+  cards Card[]
+
+  @@index([releaseYear])
+}
+
+model Card {
+  id           String       @id @default(cuid())
+  slug         String       @unique
+  setId        String
+  /// Card name as printed, e.g. "Umbreon VMAX".
+  name         String
+  /// Pokémon name used for search, e.g. "Umbreon". Null for trainers/energy.
+  pokemon      String?
+  /// Printed card number, e.g. "4/102" or "GG69/GG70".
+  number       String
+  /// Variant label shown on the card, e.g. "Alternate Art", "1st Edition".
+  variant      String?
+  rarity       Rarity
+  /// Energy type used for placeholder art colour (fire, water, …, trainer).
+  energyType   String       @default("colorless")
+  dexNumber    Int?
+  /// Optional artwork URL (e.g. imported from TCGdex). Null renders placeholder art.
+  imageUrl     String?
+  /// Grading label, e.g. "PSA 10", for graded vault slabs.
+  grade        String?
+  releaseYear  Int
+  category     CardCategory
+  /// Anchor value the market simulation reverts towards.
+  baseValue    Int
+  /// Current fictional market value in RC.
+  currentValue Int
+  isActive     Boolean      @default(true)
+  externalId   String?      @unique
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  set            CardSet                 @relation(fields: [setId], references: [id], onDelete: Restrict)
+  owned          UserCard[]
+  favorites      FavoriteCard[]
+  pools          PackDropPool[]
+  rewards        PackOpeningReward[]
+  listings       MarketplaceListing[]
+  marketSales    MarketplaceTransaction[]
+  priceHistory   CardPriceHistory[]
+  boxRewardCards MysteryBoxRewardCard[]
+  transactions   WalletTransaction[]
+  activity       ActivityEvent[]
+
+  @@index([setId])
+  @@index([rarity])
+  @@index([currentValue])
+  @@index([pokemon])
+}
+
+model CardPriceHistory {
+  id         String   @id @default(cuid())
+  cardId     String
+  price      Int
+  /// Mock trading volume for the period ending at recordedAt.
+  volume     Int
+  recordedAt DateTime
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId, recordedAt])
+  @@index([recordedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ownership
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One row per owned copy of a card.
+model UserCard {
+  id            String         @id @default(cuid())
+  userId        String
+  cardId        String
+  status        UserCardStatus @default(OWNED)
+  source        CardSource
+  /// Virtual value (or price paid) when acquired.
+  acquiredValue Int
+  acquiredAt    DateTime       @default(now())
+
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card      Card                 @relation(fields: [cardId], references: [id], onDelete: Restrict)
+  pull      PackOpeningReward?
+  listings  MarketplaceListing[]
+
+  @@index([userId, cardId])
+  @@index([userId, acquiredAt])
+  @@index([cardId])
+}
+
+model FavoriteCard {
+  userId    String
+  cardId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@id([userId, cardId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Packs
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Pack {
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  name         String
+  tagline      String
+  description  String
+  /// Price in RC.
+  price        Int
+  cardsPerPack Int
+  /// Visual theme key used by the pack artwork component.
+  theme        String
+  isActive     Boolean  @default(true)
+  featured     Boolean  @default(false)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  odds         PackRarityOdds[]
+  pool         PackDropPool[]
+  openings     PackOpening[]
+  vouchers     PackVoucher[]
+  oddsVersions OddsVersion[]
+  transactions WalletTransaction[]
+  dailyRewards DailyReward[]
+  boxRewards   MysteryBoxReward[]
+
+  @@index([isActive, sortOrder])
+}
+
+/// Per-slot rarity probability for a pack, in parts per million (sum = 1,000,000).
+model PackRarityOdds {
+  packId    String
+  rarity    Rarity
+  weightPpm Int
+
+  pack Pack @relation(fields: [packId], references: [id], onDelete: Cascade)
+
+  @@id([packId, rarity])
+}
+
+/// Cards eligible to drop from a pack. Within a rarity tier, cards are chosen
+/// proportionally to `weight`.
+model PackDropPool {
+  id     String @id @default(cuid())
+  packId String
+  cardId String
+  weight Int    @default(100)
+
+  pack Pack @relation(fields: [packId], references: [id], onDelete: Cascade)
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([packId, cardId])
+  @@index([cardId])
+}
+
+/// Immutable snapshot of the odds configuration used for draws. A new version is
+/// written every time odds or pools change, so every opening is auditable.
+model OddsVersion {
+  id        String   @id @default(cuid())
+  kind      OddsKind
+  packId    String?
+  boxId     String?
+  version   Int
+  /// SHA-256 of the canonical JSON snapshot.
+  hash      String
+  data      Json
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  pack         Pack?               @relation(fields: [packId], references: [id], onDelete: Cascade)
+  box          MysteryBox?         @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  packOpenings PackOpening[]
+  boxOpenings  MysteryBoxOpening[]
+
+  @@unique([packId, version])
+  @@unique([boxId, version])
+}
+
+model PackOpening {
+  id             String   @id @default(cuid())
+  userId         String
+  packId         String
+  oddsVersionId  String
+  /// Groups openings purchased together (1x / 5x / 10x).
+  batchId        String
+  idempotencyKey String
+  /// RC paid for this pack (0 when a voucher was redeemed).
+  pricePaid      Int
+  totalValue     Int
+  createdAt      DateTime @default(now())
+
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pack        Pack                @relation(fields: [packId], references: [id], onDelete: Restrict)
+  oddsVersion OddsVersion         @relation(fields: [oddsVersionId], references: [id], onDelete: Restrict)
+  rewards     PackOpeningReward[]
+  voucher     PackVoucher?
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([batchId])
+  @@index([packId, createdAt])
+  @@index([createdAt])
+}
+
+model PackOpeningReward {
+  id         String   @id @default(cuid())
+  openingId  String
+  userId     String
+  cardId     String
+  userCardId String?  @unique
+  slot       Int
+  rarity     Rarity
+  /// Card value at the moment it was pulled.
+  value      Int
+  /// Raw RNG outputs, so the draw can be replayed against the odds snapshot.
+  rarityRoll Int
+  cardRoll   Int
+  createdAt  DateTime @default(now())
+
+  opening  PackOpening @relation(fields: [openingId], references: [id], onDelete: Cascade)
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card     Card        @relation(fields: [cardId], references: [id], onDelete: Restrict)
+  userCard UserCard?   @relation(fields: [userCardId], references: [id], onDelete: SetNull)
+
+  @@index([openingId])
+  @@index([userId, value])
+  @@index([createdAt, value])
+  @@index([rarity, createdAt])
+}
+
+model PackVoucher {
+  id         String        @id @default(cuid())
+  userId     String
+  packId     String
+  source     VoucherSource
+  createdAt  DateTime      @default(now())
+  redeemedAt DateTime?
+  openingId  String?       @unique
+
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pack    Pack         @relation(fields: [packId], references: [id], onDelete: Cascade)
+  opening PackOpening? @relation(fields: [openingId], references: [id], onDelete: SetNull)
+
+  @@index([userId, redeemedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Marketplace
+// ─────────────────────────────────────────────────────────────────────────────
+
+model MarketplaceListing {
+  id          String        @id @default(cuid())
+  sellerId    String
+  buyerId     String?
+  /// Null once the listed copy has later been sold back to the platform.
+  userCardId  String?
+  cardId      String
+  price       Int
+  status      ListingStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  soldAt      DateTime?
+  cancelledAt DateTime?
+
+  seller      User                    @relation("ListingSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  buyer       User?                   @relation("ListingBuyer", fields: [buyerId], references: [id], onDelete: SetNull)
+  userCard    UserCard?               @relation(fields: [userCardId], references: [id], onDelete: SetNull)
+  card        Card                    @relation(fields: [cardId], references: [id], onDelete: Restrict)
+  transaction MarketplaceTransaction?
+
+  @@index([status, createdAt])
+  @@index([status, price])
+  @@index([cardId, status])
+  @@index([sellerId, status])
+  @@index([userCardId])
+}
+
+model MarketplaceTransaction {
+  id             String   @id @default(cuid())
+  listingId      String   @unique
+  buyerId        String
+  sellerId       String
+  cardId         String
+  price          Int
+  fee            Int
+  sellerProceeds Int
+  createdAt      DateTime @default(now())
+
+  listing MarketplaceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  buyer   User               @relation("MarketBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  seller  User               @relation("MarketSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  card    Card               @relation(fields: [cardId], references: [id], onDelete: Restrict)
+
+  @@index([createdAt])
+  @@index([cardId, createdAt])
+  @@index([buyerId, createdAt])
+  @@index([sellerId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mystery boxes & collectibles
+// ─────────────────────────────────────────────────────────────────────────────
+
+model MysteryBox {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  tagline     String
+  description String
+  price       Int
+  theme       String
+  isActive    Boolean  @default(true)
+  featured    Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rewards      MysteryBoxReward[]
+  openings     MysteryBoxOpening[]
+  oddsVersions OddsVersion[]
+  transactions WalletTransaction[]
+}
+
+model MysteryBoxReward {
+  id            String               @id @default(cuid())
+  boxId         String
+  type          MysteryBoxRewardType
+  label         String
+  /// Probability in parts per million; all rewards of a box sum to 1,000,000.
+  weightPpm     Int
+  coins         Int?
+  packId        String?
+  collectibleId String?
+  /// Coins granted instead if a limited collectible is sold out (disclosed in odds).
+  fallbackCoins Int?
+  sortOrder     Int                  @default(0)
+
+  box         MysteryBox             @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  pack        Pack?                  @relation(fields: [packId], references: [id], onDelete: SetNull)
+  collectible Collectible?           @relation(fields: [collectibleId], references: [id], onDelete: SetNull)
+  cards       MysteryBoxRewardCard[]
+  openings    MysteryBoxOpening[]
+
+  @@index([boxId])
+}
+
+model MysteryBoxRewardCard {
+  rewardId String
+  cardId   String
+  quantity Int    @default(1)
+
+  reward MysteryBoxReward @relation(fields: [rewardId], references: [id], onDelete: Cascade)
+  card   Card             @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@id([rewardId, cardId])
+}
+
+model MysteryBoxOpening {
+  id             String   @id @default(cuid())
+  userId         String
+  boxId          String
+  rewardId       String
+  oddsVersionId  String
+  idempotencyKey String
+  pricePaid      Int
+  roll           Int
+  valueAwarded   Int
+  usedFallback   Boolean  @default(false)
+  details        Json?
+  createdAt      DateTime @default(now())
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  box         MysteryBox       @relation(fields: [boxId], references: [id], onDelete: Restrict)
+  reward      MysteryBoxReward @relation(fields: [rewardId], references: [id], onDelete: Restrict)
+  oddsVersion OddsVersion      @relation(fields: [oddsVersionId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([boxId, createdAt])
+}
+
+model Collectible {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String
+  rarity      Rarity
+  /// Visual key for the collectible badge art.
+  icon        String
+  value       Int
+  /// Null means unlimited.
+  maxSupply   Int?
+  mintedCount Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  owners  UserCollectible[]
+  rewards MysteryBoxReward[]
+}
+
+model UserCollectible {
+  id            String   @id @default(cuid())
+  userId        String
+  collectibleId String
+  serialNumber  Int
+  acquiredAt    DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collectible Collectible @relation(fields: [collectibleId], references: [id], onDelete: Cascade)
+
+  @@unique([collectibleId, serialNumber])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Progression
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Seven-day login reward cycle.
+model DailyReward {
+  day       Int      @id
+  coins     Int
+  xp        Int      @default(0)
+  packId    String?
+  label     String
+  updatedAt DateTime @updatedAt
+
+  pack Pack? @relation(fields: [packId], references: [id], onDelete: SetNull)
+}
+
+model DailyRewardClaim {
+  id        String   @id @default(cuid())
+  userId    String
+  /// UTC calendar day, YYYY-MM-DD.
+  dateKey   String
+  day       Int
+  streak    Int
+  coins     Int
+  voucherId String?
+  claimedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dateKey])
+  @@index([claimedAt])
+}
+
+model Mission {
+  id          String        @id @default(cuid())
+  key         String        @unique
+  title       String
+  description String
+  type        MissionType
+  period      MissionPeriod
+  target      Int
+  rewardCoins Int
+  rewardXp    Int
+  isActive    Boolean       @default(true)
+  sortOrder   Int           @default(0)
+  createdAt   DateTime      @default(now())
+
+  userMissions UserMission[]
+}
+
+model UserMission {
+  id          String    @id @default(cuid())
+  userId      String
+  missionId   String
+  /// "D:2026-01-31", "W:2026-W05" or "ONCE".
+  periodKey   String
+  progress    Int       @default(0)
+  completedAt DateTime?
+  claimedAt   DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, missionId, periodKey])
+  @@index([userId, periodKey])
+}
+
+model Achievement {
+  id          String            @id @default(cuid())
+  key         String            @unique
+  name        String
+  description String
+  /// Lucide icon name.
+  icon        String
+  tier        AchievementTier
+  metric      AchievementMetric
+  threshold   Int
+  rewardCoins Int               @default(0)
+  rewardXp    Int               @default(0)
+  sortOrder   Int               @default(0)
+
+  users UserAchievement[]
+}
+
+model UserAchievement {
+  userId        String
+  achievementId String
+  unlockedAt    DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@id([userId, achievementId])
+  @@index([unlockedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Activity, configuration & auditing
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ActivityEvent {
+  id        String       @id @default(cuid())
+  type      ActivityType
+  userId    String?
+  cardId    String?
+  rarity    Rarity?
+  value     Int?
+  message   String
+  metadata  Json?
+  createdAt DateTime     @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card Card? @relation(fields: [cardId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([type, createdAt])
+}
+
+/// Key/value runtime configuration editable from the admin dashboard.
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
+model AdminAuditLog {
+  id         String   @id @default(cuid())
+  adminId    String
+  action     String
+  targetType String
+  targetId   String?
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  admin User @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([targetType, targetId])
+}
