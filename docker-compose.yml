@@ -1,0 +1,23 @@
+# Local PostgreSQL for development and integration tests.
+#   docker compose up -d
+# Creates the `pokerip` database plus `pokerip_test` for the integration suite.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pokerip
+      POSTGRES_PASSWORD: pokerip
+      POSTGRES_DB: pokerip
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pokerip"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata:
